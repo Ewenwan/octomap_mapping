@@ -1,59 +1,40 @@
 /*
  * Copyright (c) 2010-2013, A. Hornung, University of Freiburg
  * All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- *     * Redistributions of source code must retain the above copyright
- *       notice, this list of conditions and the following disclaimer.
- *     * Redistributions in binary form must reproduce the above copyright
- *       notice, this list of conditions and the following disclaimer in the
- *       documentation and/or other materials provided with the distribution.
- *     * Neither the name of the University of Freiburg nor the names of its
- *       contributors may be used to endorse or promote products derived from
- *       this software without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
- * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
- * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
- * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
- * POSSIBILITY OF SUCH DAMAGE.
+ * Octomap 建图服务器
  */
 
 #include <octomap_server/OctomapServer.h>
 
-using namespace octomap;
-using octomap_msgs::Octomap;
+using namespace octomap; // 命名空间
+using octomap_msgs::Octomap; // ros下 octomap 数据格式
 
+// 浮点数判等==================
 bool is_equal (double a, double b, double epsilon = 1.0e-7)
 {
     return std::abs(a - b) < epsilon;
 }
 
-namespace octomap_server{
+namespace octomap_server
+{
 
-OctomapServer::OctomapServer(ros::NodeHandle private_nh_)
+// 类构造函数==============================================
+OctomapServer::OctomapServer(ros::NodeHandle private_nh_)// 私有节点获取参数
 : m_nh(),
   m_pointCloudSub(NULL),
   m_tfPointCloudSub(NULL),
   m_reconfigureServer(m_config_mutex),
   m_octree(NULL),
   m_maxRange(-1.0),
-  m_worldFrameId("/map"), m_baseFrameId("base_footprint"),
-  m_useHeightMap(true),
-  m_useColoredMap(false),
-  m_colorFactor(0.8),
+  m_worldFrameId("/map"), // 世界坐标系
+  m_baseFrameId("base_footprint"),// 本地坐标系
+  m_useHeightMap(true),   // 高度显示地图
+  m_useColoredMap(false), // rgb颜色地图
+  m_colorFactor(0.8),     
   m_latchedTopics(true),
   m_publishFreeSpace(false),
-  m_res(0.05),
-  m_treeDepth(0),
+  m_res(0.05),     // 精度
+  m_treeDepth(0),  // 树深度
   m_maxTreeDepth(0),
   m_pointcloudMinX(-std::numeric_limits<double>::max()),
   m_pointcloudMaxX(std::numeric_limits<double>::max()),
@@ -64,8 +45,11 @@ OctomapServer::OctomapServer(ros::NodeHandle private_nh_)
   m_occupancyMinZ(-std::numeric_limits<double>::max()),
   m_occupancyMaxZ(std::numeric_limits<double>::max()),
   m_minSizeX(0.0), m_minSizeY(0.0),
-  m_filterSpeckles(false), m_filterGroundPlane(false),
-  m_groundFilterDistance(0.04), m_groundFilterAngle(0.15), m_groundFilterPlaneDistance(0.07),
+  m_filterSpeckles(false), 
+  m_filterGroundPlane(false),   // 过滤平面===============
+  m_groundFilterDistance(0.04), 
+  m_groundFilterAngle(0.15), 
+  m_groundFilterPlaneDistance(0.07),
   m_compressMap(true),
   m_incrementalUpdate(false),
   m_initConfig(true)
@@ -73,18 +57,21 @@ OctomapServer::OctomapServer(ros::NodeHandle private_nh_)
   double probHit, probMiss, thresMin, thresMax;
 
   ros::NodeHandle private_nh(private_nh_);
+  // 私有节点 获取参数===========================================
   private_nh.param("frame_id", m_worldFrameId, m_worldFrameId);
   private_nh.param("base_frame_id", m_baseFrameId, m_baseFrameId);
   private_nh.param("height_map", m_useHeightMap, m_useHeightMap);
   private_nh.param("colored_map", m_useColoredMap, m_useColoredMap);
   private_nh.param("color_factor", m_colorFactor, m_colorFactor);
-
+	  
+// 直通滤波各坐标轴上的数据范围==========================================
   private_nh.param("pointcloud_min_x", m_pointcloudMinX,m_pointcloudMinX);
   private_nh.param("pointcloud_max_x", m_pointcloudMaxX,m_pointcloudMaxX);
   private_nh.param("pointcloud_min_y", m_pointcloudMinY,m_pointcloudMinY);
   private_nh.param("pointcloud_max_y", m_pointcloudMaxY,m_pointcloudMaxY);
   private_nh.param("pointcloud_min_z", m_pointcloudMinZ,m_pointcloudMinZ);
   private_nh.param("pointcloud_max_z", m_pointcloudMaxZ,m_pointcloudMaxZ);
+	  
   private_nh.param("occupancy_min_z", m_occupancyMinZ,m_occupancyMinZ);
   private_nh.param("occupancy_max_z", m_occupancyMaxZ,m_occupancyMaxZ);
   private_nh.param("min_x_size", m_minSizeX,m_minSizeX);
@@ -92,6 +79,8 @@ OctomapServer::OctomapServer(ros::NodeHandle private_nh_)
 
   private_nh.param("filter_speckles", m_filterSpeckles, m_filterSpeckles);
   private_nh.param("filter_ground", m_filterGroundPlane, m_filterGroundPlane);
+	  
+// 过滤平面===========================================
   // distance of points from plane for RANSAC
   private_nh.param("ground_filter/distance", m_groundFilterDistance, m_groundFilterDistance);
   // angular derivation of found plane:
@@ -101,15 +90,16 @@ OctomapServer::OctomapServer(ros::NodeHandle private_nh_)
 
   private_nh.param("sensor_model/max_range", m_maxRange, m_maxRange);
 
-  private_nh.param("resolution", m_res, m_res);
-  private_nh.param("sensor_model/hit", probHit, 0.7);
+  private_nh.param("resolution", m_res, m_res);        // 精度
+  private_nh.param("sensor_model/hit", probHit, 0.7);  // 占有格 概率 阈值
   private_nh.param("sensor_model/miss", probMiss, 0.4);
   private_nh.param("sensor_model/min", thresMin, 0.12);
   private_nh.param("sensor_model/max", thresMax, 0.97);
   private_nh.param("compress_map", m_compressMap, m_compressMap);
   private_nh.param("incremental_2D_projection", m_incrementalUpdate, m_incrementalUpdate);
 
-  if (m_filterGroundPlane && (m_pointcloudMinZ > 0.0 || m_pointcloudMaxZ < 0.0)){
+  if (m_filterGroundPlane && (m_pointcloudMinZ > 0.0 || m_pointcloudMaxZ < 0.0))
+  {
     ROS_WARN_STREAM("You enabled ground filtering but incoming pointclouds will be pre-filtered in ["
               <<m_pointcloudMinZ <<", "<< m_pointcloudMaxZ << "], excluding the ground level z=0. "
               << "This will not work.");
@@ -129,13 +119,13 @@ OctomapServer::OctomapServer(ros::NodeHandle private_nh_)
   }
 
 
-  // initialize octomap object & params
-  m_octree = new OcTreeT(m_res);
-  m_octree->setProbHit(probHit);
-  m_octree->setProbMiss(probMiss);
+  // 初始化octomap地图 对象==================
+  m_octree = new OcTreeT(m_res);// 地图精度===
+  m_octree->setProbHit(probHit);// 障碍物概率?
+  m_octree->setProbMiss(probMiss);// 空闲概率?
   m_octree->setClampingThresMin(thresMin);
   m_octree->setClampingThresMax(thresMax);
-  m_treeDepth = m_octree->getTreeDepth();
+  m_treeDepth = m_octree->getTreeDepth();// 树深度===
   m_maxTreeDepth = m_treeDepth;
   m_gridmap.info.resolution = m_res;
 
@@ -161,33 +151,46 @@ OctomapServer::OctomapServer(ros::NodeHandle private_nh_)
   private_nh.param("publish_free_space", m_publishFreeSpace, m_publishFreeSpace);
 
   private_nh.param("latch", m_latchedTopics, m_latchedTopics);
-  if (m_latchedTopics){
+  if (m_latchedTopics)
+  {
     ROS_INFO("Publishing latched (single publish will take longer, all topics are prepared)");
   } else
     ROS_INFO("Publishing non-latched (topics are only prepared as needed, will only be re-published on map change");
-
+	  
+// marker  虚拟的 图像块(占有格) 发布====== 
   m_markerPub = m_nh.advertise<visualization_msgs::MarkerArray>("occupied_cells_vis_array", 1, m_latchedTopics);
+// 障碍物/空闲 二值地图 发布========
   m_binaryMapPub = m_nh.advertise<Octomap>("octomap_binary", 1, m_latchedTopics);
+// 全概率 octomap 发布=============
   m_fullMapPub = m_nh.advertise<Octomap>("octomap_full", 1, m_latchedTopics);
+// pcl 点云图=====================
   m_pointCloudPub = m_nh.advertise<sensor_msgs::PointCloud2>("octomap_point_cloud_centers", 1, m_latchedTopics);
+// 2d占有格地图====================
   m_mapPub = m_nh.advertise<nav_msgs::OccupancyGrid>("projected_map", 5, m_latchedTopics);
+//  marker  虚拟的 图像块(空闲格) 发布====== 
   m_fmarkerPub = m_nh.advertise<visualization_msgs::MarkerArray>("free_cells_vis_array", 1, m_latchedTopics);
 
+// 下次滤波器====消息同步=======
   m_pointCloudSub = new message_filters::Subscriber<sensor_msgs::PointCloud2> (m_nh, "cloud_in", 5);
   m_tfPointCloudSub = new tf::MessageFilter<sensor_msgs::PointCloud2> (*m_pointCloudSub, m_tfListener, m_worldFrameId, 5);
   m_tfPointCloudSub->registerCallback(boost::bind(&OctomapServer::insertCloudCallback, this, _1));
 
-  m_octomapBinaryService = m_nh.advertiseService("octomap_binary", &OctomapServer::octomapBinarySrv, this);
-  m_octomapFullService = m_nh.advertiseService("octomap_full", &OctomapServer::octomapFullSrv, this);
-  m_clearBBXService = private_nh.advertiseService("clear_bbx", &OctomapServer::clearBBXSrv, this);
-  m_resetService = private_nh.advertiseService("reset", &OctomapServer::resetSrv, this);
+// 发布一些服务 =========
+  m_octomapBinaryService = m_nh.advertiseService("octomap_binary", &OctomapServer::octomapBinarySrv, this);// 二值octomap地图
+  m_octomapFullService = m_nh.advertiseService("octomap_full", &OctomapServer::octomapFullSrv, this);// 全概率 octomap
+  m_clearBBXService = private_nh.advertiseService("clear_bbx", &OctomapServer::clearBBXSrv, this);// 清空
+  m_resetService = private_nh.advertiseService("reset", &OctomapServer::resetSrv, this);// 重置
 
+// 动态参数配置
   dynamic_reconfigure::Server<OctomapServerConfig>::CallbackType f;
   f = boost::bind(&OctomapServer::reconfigureCallback, this, _1, _2);
   m_reconfigureServer.setCallback(f);
+	  
 }
 
-OctomapServer::~OctomapServer(){
+// 类析构函数===删除掉一些指针===
+OctomapServer::~OctomapServer()
+{
   if (m_tfPointCloudSub){
     delete m_tfPointCloudSub;
     m_tfPointCloudSub = NULL;
@@ -198,7 +201,6 @@ OctomapServer::~OctomapServer(){
     m_pointCloudSub = NULL;
   }
 
-
   if (m_octree){
     delete m_octree;
     m_octree = NULL;
@@ -206,16 +208,18 @@ OctomapServer::~OctomapServer(){
 
 }
 
-bool OctomapServer::openFile(const std::string& filename){
+// octomap地图读取=========================================
+bool OctomapServer::openFile(const std::string& filename)
+{
   if (filename.length() <= 3)
     return false;
 
   std::string suffix = filename.substr(filename.length()-3, 3);
-  if (suffix== ".bt"){
+  if (suffix== ".bt"){// 二进制格式读取
     if (!m_octree->readBinary(filename)){
       return false;
     }
-  } else if (suffix == ".ot"){
+  } else if (suffix == ".ot"){// ot格式读取
     AbstractOcTree* tree = AbstractOcTree::read(filename);
     if (!tree){
       return false;
@@ -237,12 +241,12 @@ bool OctomapServer::openFile(const std::string& filename){
   ROS_INFO("Octomap file %s loaded (%zu nodes).", filename.c_str(),m_octree->size());
 
   m_treeDepth = m_octree->getTreeDepth();
-  m_maxTreeDepth = m_treeDepth;
-  m_res = m_octree->getResolution();
+  m_maxTreeDepth = m_treeDepth;// 深度
+  m_res = m_octree->getResolution();// 精度
   m_gridmap.info.resolution = m_res;
   double minX, minY, minZ;
   double maxX, maxY, maxZ;
-  m_octree->getMetricMin(minX, minY, minZ);
+  m_octree->getMetricMin(minX, minY, minZ);// 范围？
   m_octree->getMetricMax(maxX, maxY, maxZ);
 
   m_updateBBXMin[0] = m_octree->coordToKey(minX);
@@ -259,16 +263,18 @@ bool OctomapServer::openFile(const std::string& filename){
 
 }
 
-void OctomapServer::insertCloudCallback(const sensor_msgs::PointCloud2::ConstPtr& cloud){
+// 根据收到的 pcl点云 转换成 ocotmap========================================================
+void OctomapServer::insertCloudCallback(const sensor_msgs::PointCloud2::ConstPtr& cloud)
+{
   ros::WallTime startTime = ros::WallTime::now();
-
-
+	
   //
   // ground filtering in base frame
   //
   PCLPointCloud pc; // input cloud for filtering and ground-detection
-  pcl::fromROSMsg(*cloud, pc);
+  pcl::fromROSMsg(*cloud, pc);// ros pcl消息 转换成 pcl类型
 
+// 获取点云坐标变换=====================
   tf::StampedTransform sensorToWorldTf;
   try {
     m_tfListener.lookupTransform(m_worldFrameId, cloud->header.frame_id, cloud->header.stamp, sensorToWorldTf);
@@ -276,26 +282,26 @@ void OctomapServer::insertCloudCallback(const sensor_msgs::PointCloud2::ConstPtr
     ROS_ERROR_STREAM( "Transform error of sensor data: " << ex.what() << ", quitting callback");
     return;
   }
-
   Eigen::Matrix4f sensorToWorld;
   pcl_ros::transformAsMatrix(sensorToWorldTf, sensorToWorld);
 
 
   // set up filter for height range, also removes NANs:
-  pcl::PassThrough<PCLPoint> pass_x;
+  pcl::PassThrough<PCLPoint> pass_x;// 直通滤波器
   pass_x.setFilterFieldName("x");
-  pass_x.setFilterLimits(m_pointcloudMinX, m_pointcloudMaxX);
+  pass_x.setFilterLimits(m_pointcloudMinX, m_pointcloudMaxX);// 保留x坐标轴上的数据范围
   pcl::PassThrough<PCLPoint> pass_y;
   pass_y.setFilterFieldName("y");
-  pass_y.setFilterLimits(m_pointcloudMinY, m_pointcloudMaxY);
+  pass_y.setFilterLimits(m_pointcloudMinY, m_pointcloudMaxY);// y轴范围
   pcl::PassThrough<PCLPoint> pass_z;
   pass_z.setFilterFieldName("z");
-  pass_z.setFilterLimits(m_pointcloudMinZ, m_pointcloudMaxZ);
+  pass_z.setFilterLimits(m_pointcloudMinZ, m_pointcloudMaxZ);// z轴范围
 
   PCLPointCloud pc_ground; // segmented ground plane
   PCLPointCloud pc_nonground; // everything else
 
-  if (m_filterGroundPlane){
+  if (m_filterGroundPlane)
+  {
     tf::StampedTransform sensorToBaseTf, baseToWorldTf;
     try{
       m_tfListener.waitForTransform(m_baseFrameId, cloud->header.frame_id, cloud->header.stamp, ros::Duration(0.2));
@@ -314,13 +320,16 @@ void OctomapServer::insertCloudCallback(const sensor_msgs::PointCloud2::ConstPtr
     pcl_ros::transformAsMatrix(baseToWorldTf, baseToWorld);
 
     // transform pointcloud from sensor frame to fixed robot frame
+// 点云转换到世界坐标下======================================
     pcl::transformPointCloud(pc, pc, sensorToBase);
+// 直通滤波=============================
     pass_x.setInputCloud(pc.makeShared());
     pass_x.filter(pc);
     pass_y.setInputCloud(pc.makeShared());
     pass_y.filter(pc);
     pass_z.setInputCloud(pc.makeShared());
     pass_z.filter(pc);
+// 过滤掉平面============================
     filterGroundPlane(pc, pc_ground, pc_nonground);
 
     // transform clouds to world frame for insertion
@@ -344,16 +353,19 @@ void OctomapServer::insertCloudCallback(const sensor_msgs::PointCloud2::ConstPtr
     pc_nonground.header = pc.header;
   }
 
-
+// 将点云加入到  octomap 地图中=======================================
   insertScan(sensorToWorldTf.getOrigin(), pc_ground, pc_nonground);
 
   double total_elapsed = (ros::WallTime::now() - startTime).toSec();
   ROS_DEBUG("Pointcloud insertion in OctomapServer done (%zu+%zu pts (ground/nonground), %f sec)", pc_ground.size(), pc_nonground.size(), total_elapsed);
 
-  publishAll(cloud->header.stamp);
+  publishAll(cloud->header.stamp);// 发布所有信息=======
 }
 
-void OctomapServer::insertScan(const tf::Point& sensorOriginTf, const PCLPointCloud& ground, const PCLPointCloud& nonground){
+void OctomapServer::insertScan(const tf::Point& sensorOriginTf, // 点云原点
+			       const PCLPointCloud& ground,     // 地面点云
+			       const PCLPointCloud& nonground)  // 去除地面的点云
+{
   point3d sensorOrigin = pointTfToOctomap(sensorOriginTf);
 
   if (!m_octree->coordToKeyChecked(sensorOrigin, m_updateBBXMin)
@@ -369,15 +381,19 @@ void OctomapServer::insertScan(const tf::Point& sensorOriginTf, const PCLPointCl
   // instead of direct scan insertion, compute update to filter ground:
   KeySet free_cells, occupied_cells;
   // insert ground points only as free:
-  for (PCLPointCloud::const_iterator it = ground.begin(); it != ground.end(); ++it){
+// 地面点云的插入=============
+  for (PCLPointCloud::const_iterator it = ground.begin(); it != ground.end(); ++it)
+  {
     point3d point(it->x, it->y, it->z);
     // maxrange check
-    if ((m_maxRange > 0.0) && ((point - sensorOrigin).norm() > m_maxRange) ) {
+    if ((m_maxRange > 0.0) && ((point - sensorOrigin).norm() > m_maxRange) ) 
+    {
       point = sensorOrigin + (point - sensorOrigin).normalized() * m_maxRange;
     }
 
     // only clear space (ground points)
-    if (m_octree->computeRayKeys(sensorOrigin, point, m_keyRay)){
+    if (m_octree->computeRayKeys(sensorOrigin, point, m_keyRay))
+    {
       free_cells.insert(m_keyRay.begin(), m_keyRay.end());
     }
 
@@ -391,7 +407,9 @@ void OctomapServer::insertScan(const tf::Point& sensorOriginTf, const PCLPointCl
   }
 
   // all other points: free on ray, occupied on endpoint:
-  for (PCLPointCloud::const_iterator it = nonground.begin(); it != nonground.end(); ++it){
+// 插入无地面点云==========================================
+  for (PCLPointCloud::const_iterator it = nonground.begin(); it != nonground.end(); ++it)
+  {
     point3d point(it->x, it->y, it->z);
     // maxrange check
     if ((m_maxRange < 0.0) || ((point - sensorOrigin).norm() <= m_maxRange) ) {
@@ -402,7 +420,8 @@ void OctomapServer::insertScan(const tf::Point& sensorOriginTf, const PCLPointCl
       }
       // occupied endpoint
       OcTreeKey key;
-      if (m_octree->coordToKeyChecked(point, key)){
+      if (m_octree->coordToKeyChecked(point, key))
+      {
         occupied_cells.insert(key);
 
         updateMinKey(key, m_updateBBXMin);
@@ -416,17 +435,23 @@ void OctomapServer::insertScan(const tf::Point& sensorOriginTf, const PCLPointCl
         m_octree->averageNodeColor(it->x, it->y, it->z, colors[0], colors[1], colors[2]);
 #endif
       }
-    } else {// ray longer than maxrange:;
+    } 
+    else
+    {// ray longer than maxrange:;
       point3d new_end = sensorOrigin + (point - sensorOrigin).normalized() * m_maxRange;
-      if (m_octree->computeRayKeys(sensorOrigin, new_end, m_keyRay)){
+      if (m_octree->computeRayKeys(sensorOrigin, new_end, m_keyRay))
+      {
         free_cells.insert(m_keyRay.begin(), m_keyRay.end());
 
         octomap::OcTreeKey endKey;
-        if (m_octree->coordToKeyChecked(new_end, endKey)){
+        if (m_octree->coordToKeyChecked(new_end, endKey))
+	{
           free_cells.insert(endKey);
           updateMinKey(endKey, m_updateBBXMin);
           updateMaxKey(endKey, m_updateBBXMax);
-        } else{
+        } 
+	else
+	{
           ROS_ERROR_STREAM("Could not generate Key for endpoint "<<new_end);
         }
 
@@ -484,8 +509,9 @@ void OctomapServer::insertScan(const tf::Point& sensorOriginTf, const PCLPointCl
 }
 
 
-
-void OctomapServer::publishAll(const ros::Time& rostime){
+// 发布所有信息===================================================
+void OctomapServer::publishAll(const ros::Time& rostime)
+{
   ros::WallTime startTime = ros::WallTime::now();
   size_t octomapSize = m_octree->size();
   // TODO: estimate num occ. voxels for size of arrays (reserve)
@@ -555,7 +581,7 @@ void OctomapServer::publishAll(const ros::Time& rostime){
           handleOccupiedNodeInBBX(it);
 
 
-        //create marker:
+        //create marker:  发布 虚拟 图形框
         if (publishMarkerArray){
           unsigned idx = it.getDepth();
           assert(idx < occupiedNodesVis.markers.size());
@@ -583,7 +609,7 @@ void OctomapServer::publishAll(const ros::Time& rostime){
 #endif
         }
 
-        // insert into pointcloud:
+        // insert into pointcloud:  发布pcl点云
         if (publishPointCloud) {
 #ifdef COLOR_OCTOMAP_SERVER
           PCLPoint _point = PCLPoint();
@@ -629,7 +655,7 @@ void OctomapServer::publishAll(const ros::Time& rostime){
   // call post-traversal hook:
   handlePostNodeTraversal(rostime);
 
-  // finish MarkerArray:
+  // finish MarkerArray:  立方体 list=======
   if (publishMarkerArray){
     for (unsigned i= 0; i < occupiedNodesVis.markers.size(); ++i){
       double size = m_octree->getNodeSize(i);
@@ -691,10 +717,10 @@ void OctomapServer::publishAll(const ros::Time& rostime){
     m_pointCloudPub.publish(cloud);
   }
 
-  if (publishBinaryMap)
+  if (publishBinaryMap)// 发布 二值 octomap====
     publishBinaryOctoMap(rostime);
 
-  if (publishFullMap)
+  if (publishFullMap)  // 发布概率octomap======
     publishFullOctoMap(rostime);
 
 
@@ -823,8 +849,11 @@ void OctomapServer::publishFullOctoMap(const ros::Time& rostime) const{
 
 }
 
-
-void OctomapServer::filterGroundPlane(const PCLPointCloud& pc, PCLPointCloud& ground, PCLPointCloud& nonground) const{
+// 对点云滤除地面=============================
+void OctomapServer::filterGroundPlane(const PCLPointCloud& pc, 
+				      PCLPointCloud& ground, 
+				      PCLPointCloud& nonground) const
+{
   ground.header = pc.header;
   nonground.header = pc.header;
 
@@ -832,7 +861,7 @@ void OctomapServer::filterGroundPlane(const PCLPointCloud& pc, PCLPointCloud& gr
     ROS_WARN("Pointcloud in OctomapServer too small, skipping ground plane extraction");
     nonground = pc;
   } else {
-    // plane detection for ground plane removal:
+    // plane detection for ground plane removal:  平面模型=================
     pcl::ModelCoefficients::Ptr coefficients (new pcl::ModelCoefficients);
     pcl::PointIndices::Ptr inliers (new pcl::PointIndices);
 
@@ -933,8 +962,10 @@ void OctomapServer::filterGroundPlane(const PCLPointCloud& pc, PCLPointCloud& gr
 
 }
 
-void OctomapServer::handlePreNodeTraversal(const ros::Time& rostime){
-  if (m_publish2DMap){
+void OctomapServer::handlePreNodeTraversal(const ros::Time& rostime)
+{
+  if (m_publish2DMap)
+  {
     // init projected 2D map:
     m_gridmap.header.frame_id = m_worldFrameId;
     m_gridmap.header.stamp = rostime;
@@ -1077,6 +1108,7 @@ void OctomapServer::handleFreeNodeInBBX(const OcTreeT::iterator& it){
   }
 }
 
+// 更新 2d地图================
 void OctomapServer::update2DMap(const OcTreeT::iterator& it, bool occupied){
 
   // update 2D map (occupied always overrides):
@@ -1188,8 +1220,10 @@ void OctomapServer::reconfigureCallback(octomap_server::OctomapServerConfig& con
   publishAll();
 }
 
-void OctomapServer::adjustMapData(nav_msgs::OccupancyGrid& map, const nav_msgs::MapMetaData& oldMapInfo) const{
-  if (map.info.resolution != oldMapInfo.resolution){
+void OctomapServer::adjustMapData(nav_msgs::OccupancyGrid& map, const nav_msgs::MapMetaData& oldMapInfo) const
+{
+  if (map.info.resolution != oldMapInfo.resolution)
+  {
     ROS_ERROR("Resolution of map changed, cannot be adjusted");
     return;
   }
@@ -1213,7 +1247,8 @@ void OctomapServer::adjustMapData(nav_msgs::OccupancyGrid& map, const nav_msgs::
 
   nav_msgs::OccupancyGrid::_data_type::iterator fromStart, fromEnd, toStart;
 
-  for (int j =0; j < int(oldMapInfo.height); ++j ){
+  for (int j =0; j < int(oldMapInfo.height); ++j )
+  {
     // copy chunks, row by row:
     fromStart = oldMapData.begin() + j*oldMapInfo.width;
     fromEnd = fromStart + oldMapInfo.width;
@@ -1227,9 +1262,9 @@ void OctomapServer::adjustMapData(nav_msgs::OccupancyGrid& map, const nav_msgs::
   }
 
 }
-
-
-std_msgs::ColorRGBA OctomapServer::heightMapColor(double h) {
+// 根据深度 计算颜色==============================================
+std_msgs::ColorRGBA OctomapServer::heightMapColor(double h) 
+{
 
   std_msgs::ColorRGBA color;
   color.a = 1.0;
